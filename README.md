@@ -97,7 +97,7 @@ Feel free to fork, modify, or raise pull requests to enhance this project.
 ## 📧 Contact
 
 For feedback or collaboration:  
-📬 [your-email@example.com]
+📬 adithnk07@gmail.com
 
 ---
 
