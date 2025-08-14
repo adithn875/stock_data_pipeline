@@ -14,7 +14,7 @@ import os
 import ta
 
 # Your Finnhub API key is now directly in the code
-FINNHUB_API_KEY = 'd2cru3pr01qihtct93tgd2cru3pr01qihtct93u0'
+FINNHUB_API_KEY = 'make your own'
 
 try:
     from dashboard import visualize_stock_data, calculate_technical_indicators
@@ -24,8 +24,8 @@ except ImportError:
     st.warning("⚠️ Advanced dashboard module not found - using basic visualization")
 
 # ------------------- TELEGRAM ALERT SYSTEM FUNCTIONS -------------------
-TELEGRAM_BOT_TOKEN = "8200133701:AAFxsdnUWkiA-fqY66gq3jY1ekj__E2VGMk"
-TELEGRAM_CHAT_ID = "1372126832"
+TELEGRAM_BOT_TOKEN = "use your token"
+TELEGRAM_CHAT_ID = "make your own"
 
 def send_telegram_alert(message):
     """
@@ -588,3 +588,4 @@ else:
         </p>
     </div>
     """, unsafe_allow_html=True)
+
