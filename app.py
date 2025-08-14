@@ -1,4 +1,5 @@
-# app.py - FINAL VERSION with News Integration and International Stock Ticker support
+# app.py - FINAL VERSION with Custom Alert Threshold
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -7,24 +8,43 @@ from plotly.subplots import make_subplots
 from datetime import date, datetime, timedelta
 import numpy as np
 import yfinance as yf
-import requests # New library for making API requests
-from textblob import TextBlob # New library for sentiment analysis
+import requests
+from textblob import TextBlob
 import os
+import ta
 
 # Your Finnhub API key is now directly in the code
 FINNHUB_API_KEY = 'd2cru3pr01qihtct93tgd2cru3pr01qihtct93u0'
 
-# Import your existing visualization
 try:
     from dashboard import visualize_stock_data, calculate_technical_indicators
-
     DASHBOARD_AVAILABLE = True
 except ImportError:
     DASHBOARD_AVAILABLE = False
     st.warning("⚠️ Advanced dashboard module not found - using basic visualization")
 
+# ------------------- TELEGRAM ALERT SYSTEM FUNCTIONS -------------------
+TELEGRAM_BOT_TOKEN = "8200133701:AAFxsdnUWkiA-fqY66gq3jY1ekj__E2VGMk"
+TELEGRAM_CHAT_ID = "1372126832"
 
-# Simple data fetching function
+def send_telegram_alert(message):
+    """
+    Sends a message to the specified Telegram chat using the bot API.
+    """
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        response = requests.post(url, data=payload)
+        response.raise_for_status()
+        print("Telegram alert sent successfully!")
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to send Telegram alert: {e}")
+# -----------------------------------------------------------------------------
+
 def fetch_stock_data(ticker, start, end):
     """Simple stock data fetching using yfinance"""
     try:
@@ -37,7 +57,6 @@ def fetch_stock_data(ticker, start, end):
         st.error(f"Error fetching data: {e}")
         return None
 
-# New function to fetch news from Finnhub
 def fetch_stock_news(ticker, start, end, api_key):
     """Fetches stock news for a given ticker and date range using Finnhub API"""
     if not api_key:
@@ -57,7 +76,6 @@ def fetch_stock_news(ticker, start, end, api_key):
         st.error(f"An error occurred while fetching news: {e}")
         return []
 
-# New function for sentiment analysis
 def get_sentiment(text):
     """Calculates sentiment of a text using TextBlob"""
     analysis = TextBlob(text)
@@ -69,39 +87,29 @@ def get_sentiment(text):
     else:
         return "Neutral 🟡"
 
-# Simple data processing function
 def process_stock_data(data, ticker):
     """Basic data processing with technical indicators"""
     if data is None or data.empty:
         return None
-
     try:
-        # Calculate simple moving averages
         data['SMA_20'] = ta.trend.sma_indicator(data['Close'], window=20)
         data['SMA_50'] = ta.trend.sma_indicator(data['Close'], window=50)
-
-        # Calculate RSI
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         data['RSI'] = 100 - (100 / (1 + rs))
-
-        # Calculate Bollinger Bands
         sma_20 = ta.trend.sma_indicator(data['Close'], window=20)
         std_20 = ta.volatility.bollinger_hband_indicator(data['Close'], window=20)
         data['BB_Upper'] = sma_20 + (std_20 * 2)
         data['BB_Lower'] = sma_20 - (std_20 * 2)
-
         return data
     except Exception as e:
         st.error(f"Error processing data: {e}")
         return data
 
-
 def create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, show_bollinger):
     """Create basic plotly chart as fallback"""
-    # Interactive price chart with Plotly
     fig = make_subplots(
         rows=3 if show_volume and show_rsi else (2 if show_volume or show_rsi else 1),
         cols=1,
@@ -113,7 +121,6 @@ def create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, sho
         row_heights=[0.6, 0.2, 0.2] if show_volume and show_rsi else [0.7, 0.3]
     )
 
-    # Price chart
     fig.add_trace(
         go.Candlestick(
             x=processed_df.index,
@@ -126,7 +133,6 @@ def create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, sho
         row=1, col=1
     )
 
-    # Moving averages
     if show_ma and 'SMA_20' in processed_df.columns:
         fig.add_trace(
             go.Scatter(
@@ -149,7 +155,6 @@ def create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, sho
             row=1, col=1
         )
 
-    # Bollinger Bands
     if show_bollinger and 'BB_Upper' in processed_df.columns:
         fig.add_trace(
             go.Scatter(
@@ -174,7 +179,6 @@ def create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, sho
 
     current_row = 2
 
-    # Volume chart
     if show_volume:
         colors = ['red' if processed_df['Close'].iloc[i] < processed_df['Open'].iloc[i]
                   else 'green' for i in range(len(processed_df))]
@@ -190,7 +194,6 @@ def create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, sho
         )
         current_row += 1
 
-    # RSI chart
     if show_rsi and 'RSI' in processed_df.columns:
         fig.add_trace(
             go.Scatter(
@@ -202,31 +205,25 @@ def create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, sho
             row=current_row, col=1
         )
 
-        # RSI overbought/oversold lines
         fig.add_hline(y=70, line_dash="dash", line_color="red",
                       annotation_text="Overbought", row=current_row, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="green",
                       annotation_text="Oversold", row=current_row, col=1)
 
-    # Update layout
     fig.update_layout(
         title=f"{ticker} Stock Analysis",
         height=800,
         showlegend=True,
         xaxis_rangeslider_visible=False
     )
-
     return fig
 
-
-# Page setup
 st.set_page_config(
     page_title="📈 Stock Data Dashboard",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
 st.markdown("""
 <style>
     .main-header {
@@ -254,18 +251,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Header
 st.markdown('<h1 class="main-header">📊 Advanced Stock Market Analysis Dashboard</h1>', unsafe_allow_html=True)
 
-# Sidebar inputs
 st.sidebar.header("🔧 Configuration")
-
-# Stock selection with popular stocks
 popular_stocks = ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN", "META", "NVDA", "NFLX"]
-
-# First, check if a stock is selected from dropdown
 selected_stock = st.sidebar.selectbox("🔽 Quick Select Popular Stocks:", [""] + popular_stocks, key="stock_selector")
-
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"""
     **💡 Tip for international stocks:**
@@ -273,14 +263,11 @@ st.sidebar.markdown(f"""
 """)
 st.sidebar.markdown("---")
 
-
-# Then show the text input with the selected value or default
 if selected_stock:
     ticker = st.sidebar.text_input("📝 Enter Stock Ticker", value=selected_stock).upper()
 else:
     ticker = st.sidebar.text_input("📝 Enter Stock Ticker", value="AAPL").upper()
 
-# Date range selection
 st.sidebar.subheader("📅 Date Range")
 date_option = st.sidebar.radio(
     "Select date range:",
@@ -298,10 +285,9 @@ else:
         start_date = end_date - timedelta(days=90)
     elif date_option == "Last 6 months":
         start_date = end_date - timedelta(days=180)
-    else:  # Last 1 year
+    else:
         start_date = end_date - timedelta(days=365)
 
-# Analysis options
 st.sidebar.subheader("📊 Analysis Options")
 chart_type = st.sidebar.radio(
     "Chart Type:",
@@ -313,10 +299,26 @@ show_ma = st.sidebar.checkbox("Show Moving Averages", value=True)
 show_rsi = st.sidebar.checkbox("Show RSI", value=True)
 show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=False)
 
-# Run analysis button
+# ------------------- NEW: CUSTOM ALERT THRESHOLD INPUT -------------------
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔔 Set Custom Alert")
+custom_alert_threshold_str = st.sidebar.text_input("Enter Alert Threshold (%)", "5.0")
+set_alert_btn = st.sidebar.button("Set Alert Threshold", use_container_width=True)
+
+# Define a default alert threshold
+ALERT_THRESHOLD = 5.0
+
+# Update threshold if the user sets a custom value
+if set_alert_btn and custom_alert_threshold_str:
+    try:
+        ALERT_THRESHOLD = float(custom_alert_threshold_str)
+        st.sidebar.success(f"Alert threshold set to {ALERT_THRESHOLD}%")
+    except ValueError:
+        st.sidebar.error("Invalid number for threshold. Please enter a number.")
+# -------------------------------------------------------------------------
+
 run_btn = st.sidebar.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
-# Add your signature in sidebar
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 <div style='text-align: center; padding: 15px; background: linear-gradient(45deg, #667eea, #764ba2); border-radius: 10px; color: white;'>
@@ -330,49 +332,46 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Main content area
 if run_btn and ticker:
-    # Progress tracking
     progress_bar = st.progress(0)
     status_text = st.empty()
 
     try:
-        # Step 1: Fetch Data
         status_text.text("📥 Fetching stock data...")
         progress_bar.progress(20)
-
         raw_df = fetch_stock_data(ticker, start=start_date, end=end_date)
-
         if raw_df is None or raw_df.empty:
             st.error("❌ No data fetched. Please check the ticker symbol and try again.")
         else:
             progress_bar.progress(40)
             st.success(f"✅ Successfully fetched {len(raw_df)} data points for {ticker}")
-
-            # Step 2: Process Data
             status_text.text("⚙️ Processing data...")
             progress_bar.progress(60)
-
             processed_df = process_stock_data(raw_df, ticker)
-
             if processed_df is None or processed_df.empty:
                 st.error("❌ Data processing failed.")
             else:
                 progress_bar.progress(80)
                 st.success(f"✅ Data processed successfully: {len(processed_df)} rows")
-
-                # Clear progress indicators
                 progress_bar.progress(100)
                 status_text.empty()
                 progress_bar.empty()
 
-                # Always create tabs for different views
+                # ------------------- PRODUCTION TELEGRAM ALERT LOGIC -------------------
+                if not processed_df.empty and len(processed_df) > 1:
+                    current_price = processed_df['Close'].iloc[-1]
+                    previous_price = processed_df['Close'].iloc[-2]
+                    price_change_percent = ((current_price - previous_price) / previous_price) * 100
+                    if abs(price_change_percent) > ALERT_THRESHOLD:
+                        alert_message = f"🚨 **Price Alert!** 🚨\n\nStock: {ticker}\nPrice changed by **{price_change_percent:.2f}%** in the last day."
+                        send_telegram_alert(alert_message)
+                        st.info("A Telegram alert has been sent!")
+                # -----------------------------------------------------------------------
+
                 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Charts", "📊 Data Table", "📋 Summary", "📰 News & Events", "📥 Download"])
 
                 with tab1:
                     st.markdown("## 📊 Technical Analysis Chart")
-
-                    # Choose chart type based on user selection and availability
                     if chart_type == "Advanced Dashboard" and DASHBOARD_AVAILABLE:
                         try:
                             fig = visualize_stock_data(processed_df, ticker)
@@ -380,11 +379,9 @@ if run_btn and ticker:
                         except Exception as e:
                             st.warning(f"⚠️ Advanced dashboard failed: {e}")
                             st.info("🔄 Falling back to basic charts...")
-                            fig = create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi,
-                                                     show_bollinger)
+                            fig = create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, show_bollinger)
                             st.plotly_chart(fig, use_container_width=True)
                     else:
-                        # Use basic charts
                         fig = create_basic_chart(processed_df, ticker, show_volume, show_ma, show_rsi, show_bollinger)
                         st.plotly_chart(fig, use_container_width=True)
                         if not DASHBOARD_AVAILABLE:
@@ -392,116 +389,74 @@ if run_btn and ticker:
 
                 with tab2:
                     st.subheader("📄 Complete Dataset")
-
-                    # Data filtering options
                     col1, col2 = st.columns(2)
                     with col1:
                         show_rows = st.selectbox("Rows to display:", [10, 25, 50, 100, "All"])
                     with col2:
                         sort_order = st.selectbox("Sort by date:", ["Newest first", "Oldest first"])
-
-                    # Display data
                     display_df = processed_df.copy()
                     if sort_order == "Newest first":
                         display_df = display_df.sort_index(ascending=False)
-
                     if show_rows != "All":
                         display_df = display_df.head(show_rows)
-
                     st.dataframe(display_df, use_container_width=True)
-
-                    # Data info
                     st.info(
                         f"📊 **Dataset Info:** {len(processed_df)} rows × {len(processed_df.columns)} columns | Date range: {processed_df.index.min().date()} to {processed_df.index.max().date()}")
 
                 with tab3:
                     st.subheader("📋 Stock Analysis Summary")
-
                     latest = processed_df.iloc[-1]
                     first = processed_df.iloc[0]
-
-                    # Key metrics in columns
                     col1, col2, col3, col4 = st.columns(4)
-
                     with col1:
                         price_change = ((latest['Close'] - first['Close']) / first['Close'] * 100)
-                        st.metric(
-                            "Current Price",
-                            f"${latest['Close']:.2f}",
-                            f"{price_change:+.2f}%"
-                        )
-
+                        st.metric("Current Price", f"${latest['Close']:.2f}", f"{price_change:+.2f}%")
                     with col2:
-                        vol_change = ((latest['Volume'] - processed_df['Volume'].mean()) / processed_df[
-                            'Volume'].mean() * 100)
-                        st.metric(
-                            "Volume",
-                            f"{latest['Volume']:,.0f}",
-                            f"{vol_change:+.1f}% vs avg"
-                        )
-
+                        vol_change = ((latest['Volume'] - processed_df['Volume'].mean()) / processed_df['Volume'].mean() * 100)
+                        st.metric("Volume", f"{latest['Volume']:,.0f}", f"{vol_change:+.1f}% vs avg")
                     with col3:
                         if 'RSI' in processed_df.columns and not pd.isna(latest['RSI']):
-                            rsi_signal = "🔴 Overbought" if latest['RSI'] > 70 else (
-                                "🟢 Oversold" if latest['RSI'] < 30 else "🟡 Neutral")
+                            rsi_signal = "🔴 Overbought" if latest['RSI'] > 70 else ("🟢 Oversold" if latest['RSI'] < 30 else "🟡 Neutral")
                             st.metric("RSI (14)", f"{latest['RSI']:.1f}", rsi_signal)
                         else:
                             st.metric("Daily High", f"${latest['High']:.2f}")
-
                     with col4:
                         volatility = processed_df['Close'].pct_change().std() * np.sqrt(252) * 100
                         st.metric("Volatility (Annual)", f"{volatility:.1f}%")
 
-                    # Additional statistics
                     st.markdown("---")
                     st.subheader("📊 Detailed Statistics")
-
                     col1, col2 = st.columns(2)
-
                     with col1:
                         st.markdown("**📈 Price Statistics:**")
                         price_stats = processed_df['Close'].describe()
                         for stat, value in price_stats.items():
                             st.write(f"• **{stat.title()}:** ${value:.2f}")
-
                     with col2:
                         st.markdown("**📊 Volume Statistics:**")
                         volume_stats = processed_df['Volume'].describe()
                         for stat, value in volume_stats.items():
                             st.write(f"• **{stat.title()}:** {value:,.0f}")
-
-                    # Performance metrics
                     st.markdown("---")
                     st.subheader("🎯 Performance Metrics")
-
                     col1, col2, col3 = st.columns(3)
-
                     with col1:
-                        # 52-week high/low
                         high_52w = processed_df['High'].max()
                         low_52w = processed_df['Low'].min()
                         st.metric("52W High", f"${high_52w:.2f}")
                         st.metric("52W Low", f"${low_52w:.2f}")
-
                     with col2:
-                        # Average daily return
                         daily_returns = processed_df['Close'].pct_change().dropna()
                         avg_daily_return = daily_returns.mean() * 100
                         st.metric("Avg Daily Return", f"{avg_daily_return:.3f}%")
-
-                        # Best/worst day
                         best_day = daily_returns.max() * 100
                         worst_day = daily_returns.min() * 100
                         st.metric("Best Day", f"+{best_day:.2f}%")
                         st.metric("Worst Day", f"{worst_day:.2f}%")
-
                     with col3:
-                        # Sharpe ratio (simplified)
                         if daily_returns.std() > 0:
                             sharpe = (avg_daily_return / (daily_returns.std() * 100)) * np.sqrt(252)
                             st.metric("Sharpe Ratio", f"{sharpe:.2f}")
-
-                        # Win rate
                         win_rate = (daily_returns > 0).mean() * 100
                         st.metric("Win Rate", f"{win_rate:.1f}%")
 
@@ -509,7 +464,7 @@ if run_btn and ticker:
                     st.markdown(f"## 📰 Latest News for {ticker}")
                     news_data = fetch_stock_news(ticker, start_date, end_date, FINNHUB_API_KEY)
                     if news_data:
-                        for article in news_data[:10]: # Display top 10 articles
+                        for article in news_data[:10]:
                             with st.expander(f"**{article['headline']}**"):
                                 st.write(f"**Source**: {article['source']}")
                                 st.write(f"**Published**: {datetime.fromtimestamp(article['datetime']).strftime('%Y-%m-%d %H:%M:%S')}")
@@ -521,18 +476,12 @@ if run_btn and ticker:
 
                 with tab5:
                     st.subheader("📥 Download Your Data")
-
-                    # Show data info
                     st.info(
                         f"📊 **Ready to download:** {len(processed_df)} rows of {ticker} stock data from {start_date} to {end_date}")
-
                     col1, col2 = st.columns(2)
-
                     with col1:
                         st.markdown("### 📄 CSV Format")
                         st.write("Perfect for Excel, Google Sheets, and data analysis")
-
-                        # CSV download
                         csv_data = processed_df.to_csv(index=True).encode('utf-8')
                         st.download_button(
                             label="📄 Download CSV File",
@@ -542,12 +491,9 @@ if run_btn and ticker:
                             use_container_width=True,
                             help="Download stock data in CSV format for Excel/Sheets"
                         )
-
                     with col2:
                         st.markdown("### 📋 JSON Format")
                         st.write("Perfect for web applications and APIs")
-
-                        # JSON download
                         json_data = processed_df.to_json(orient='records', date_format='iso', indent=2)
                         st.download_button(
                             label="📋 Download JSON File",
@@ -558,13 +504,10 @@ if run_btn and ticker:
                             help="Download stock data in JSON format for web apps"
                         )
 
-                    # Quick download in main data section
                     st.markdown("---")
                     st.markdown("### 🚀 Quick Actions")
                     col1, col2, col3 = st.columns(3)
-
                     with col1:
-                        # Quick CSV download
                         st.download_button(
                             label="⚡ Quick CSV",
                             data=csv_data,
@@ -572,36 +515,26 @@ if run_btn and ticker:
                             mime='text/csv',
                             help="Quick CSV download"
                         )
-
                     with col2:
-                        # Show data preview
                         if st.button("👀 Preview Data"):
                             st.dataframe(processed_df.head(10), use_container_width=True)
-
                     with col3:
-                        # Data statistics
                         if st.button("📊 Data Stats"):
                             st.write(f"**Total Records:** {len(processed_df)}")
-                            st.write(
-                                f"**Date Range:** {processed_df.index.min().date()} to {processed_df.index.max().date()}")
+                            st.write(f"**Date Range:** {processed_df.index.min().date()} to {processed_df.index.max().date()}")
                             st.write(f"**Columns:** {len(processed_df.columns)}")
-
                     st.markdown("---")
                     st.success("💡 **Tip:** Use CSV format for Excel compatibility, JSON for web applications and APIs.")
-
-                    # File format information
                     with st.expander("ℹ️ File Format Information"):
                         st.markdown("""
                         **CSV Format includes:**
                         - Date, Open, High, Low, Close, Volume
                         - Technical indicators (RSI, Moving Averages, etc.)
                         - Compatible with Excel, Google Sheets, Python pandas
-
                         **JSON Format includes:**
                         - Same data as CSV but in JSON structure
                         - Perfect for web applications and APIs
                         - Easy to parse with JavaScript, Python, etc.
-
                         **Data Processing:**
                         - All data is cleaned and validated
                         - Technical indicators calculated using industry-standard methods
@@ -611,45 +544,34 @@ if run_btn and ticker:
     except Exception as e:
         st.error(f"❌ An error occurred: {str(e)}")
         st.error("Please check your ticker symbol and try again.")
-
     finally:
-        # Clean up progress indicators
         if 'progress_bar' in locals():
             progress_bar.empty()
         if 'status_text' in locals():
             status_text.empty()
-
 else:
-    # Welcome screen
     st.markdown("""
     ## Welcome to the Stock Market Analysis Dashboard! 🎯
-
     This powerful tool helps you analyze stock market data with interactive charts and comprehensive insights.
-
     ### 🚀 Features:
     - **Real-time stock data** fetching and processing
     - **Interactive charts** with candlestick patterns, volume, and technical indicators
     - **Technical analysis** including RSI, Moving Averages, and Bollinger Bands
     - **Data export** in multiple formats (CSV, JSON)
     - **Comprehensive statistics** and market insights
-
     ### 📋 How to use:
     1. Enter a stock ticker symbol (e.g., AAPL, GOOGL, TSLA)
     2. Select your preferred date range
     3. Choose which indicators to display
     4. Click "🚀 Run Analysis" to start
-
     ### 💡 Pro Tips:
     - Use popular tickers from the dropdown for quick selection
     - Choose between "Advanced Dashboard" or "Basic Charts"
     - Enable multiple indicators for comprehensive analysis
     - Download data for offline analysis
     - Check the summary tab for key insights
-
     **Ready to start? Configure your analysis in the sidebar and hit the Run button!**
     """)
-
-    # Footer with your signature
     st.markdown("""
     <div style='text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-top: 50px;'>
         <h4 style='color: #666; margin-bottom: 10px;'>📊 Built by Adith NK</h4>
